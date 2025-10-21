@@ -1,11 +1,10 @@
-langchain
-langchain-google-genai
+langchain==0.2.14
+langchain-core==0.2.24
+langchain-community==0.2.11
+langchain-google-genai==1.0.6
 google-generativeai
-datasets
-sentence-transformers
 chromadb
+sentence-transformers
+datasets
 streamlit
 python-dotenv
-langchain-community
-
-
