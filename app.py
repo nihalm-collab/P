@@ -1,73 +1,76 @@
 import os
 from dotenv import load_dotenv
-import google.generativeai as genai
 from datasets import load_dataset
 from sentence_transformers import SentenceTransformer
-import chromadb
-from chromadb.config import Settings
+from langchain.vectorstores import Chroma
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.chains import RetrievalQA
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 import streamlit as st
 
-# --- Ortam değişkenlerini yükle ---
+# --- Ortam Değişkenleri ---
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-genai.configure(api_key=GEMINI_API_KEY)
+# --- Streamlit Arayüzü ---
+st.title("📚 Kitapyurdu RAG Chatbot (LangChain + Gemini)")
+st.markdown("Kullanıcı yorumlarına dayalı kitap asistanı 💬")
 
-# --- Başlık ---
-st.title("📚 Kitapyurdu Yorum Asistanı Chatbot")
-
-# --- Veri setini yükle ---
+# --- Veri Setini Yükle ---
 @st.cache_data(show_spinner=False)
 def load_data():
     dataset = load_dataset("alibayram/kitapyurdu_yorumlar", split="train", token=HF_TOKEN)
-    return dataset
+    return dataset["review"]
 
 data = load_data()
 
+# --- Metinleri Böl ---
+@st.cache_data(show_spinner=False)
+def split_texts(texts):
+    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
+    docs = splitter.create_documents(texts)
+    return docs
+
+docs = split_texts(data[:5000])  # hızlı başlatmak için ilk 5000 yorumu alıyoruz
+
 # --- Embedding Modeli ---
 @st.cache_resource
-def get_embedder():
-    return SentenceTransformer("all-MiniLM-L6-v2")
+def get_embeddings():
+    return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-embedder = get_embedder()
+embeddings = get_embeddings()
 
-# --- ChromaDB kur ---
+# --- ChromaDB Oluştur ---
 PERSIST_DIR = "chroma_db"
-client = chromadb.Client(Settings(chroma_db_impl="duckdb+parquet", persist_directory=PERSIST_DIR))
-collection = client.get_or_create_collection("kitapyurdu_yorumlar")
+if not os.path.exists(PERSIST_DIR):
+    os.makedirs(PERSIST_DIR)
 
-# --- Veriyi vektörleştir ve ekle ---
-if len(collection.get()['ids']) == 0:
-    texts = data["review"]
-    embeddings = embedder.encode(texts)
-    ids = [str(i) for i in range(len(texts))]
-    collection.add(documents=texts, embeddings=embeddings, ids=ids)
-    st.info("Veriler ChromaDB'ye eklendi ✅")
+vectorstore = Chroma.from_documents(docs, embedding=embeddings, persist_directory=PERSIST_DIR)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
-# --- Sorgu işlemi ---
-def search_similar_reviews(query):
-    query_embedding = embedder.encode([query])
-    results = collection.query(query_embeddings=query_embedding, n_results=3)
-    return results["documents"][0]
+# --- Gemini Modelini Tanımla ---
+llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", google_api_key=GEMINI_API_KEY)
 
-# --- Kullanıcı Girişi ---
-user_query = st.text_input("Bir kitapla ilgili sorunu veya isteğini yaz:")
+# --- LangChain RAG Pipeline ---
+qa_chain = RetrievalQA.from_chain_type(
+    llm=llm,
+    chain_type="stuff",  # bağlamı doğrudan birleştir
+    retriever=retriever,
+    return_source_documents=True
+)
 
+# --- Kullanıcı Sorgusu ---
+user_query = st.text_input("Bir kitap hakkında ne öğrenmek istiyorsun?")
 if st.button("Sor"):
     if user_query:
-        similar_reviews = search_similar_reviews(user_query)
-        context = "\n".join(similar_reviews)
+        with st.spinner("Yanıt hazırlanıyor..."):
+            response = qa_chain(user_query)
+            st.write("💬 **Asistan:**", response["result"])
 
-        prompt = f"""
-        Aşağıda bazı kullanıcı yorumları var:
-        {context}
-
-        Yukarıdaki yorumlara dayanarak, şu soruya doğal bir şekilde yanıt ver:
-        Soru: {user_query}
-        """
-
-        response = genai.GenerativeModel("gemini-2.5-flash").generate_content(prompt)
-        st.write("💬 **Asistan:**", response.text)
+            with st.expander("📚 Kaynak Yorumlar"):
+                for doc in response["source_documents"]:
+                    st.markdown(f"- {doc.page_content}")
     else:
-        st.warning("Lütfen bir soru yaz.")
+        st.warning("Lütfen bir soru gir.")
