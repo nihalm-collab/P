@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 from datasets import load_dataset
 from sentence_transformers import SentenceTransformer
 from langchain_community.vectorstores import Chroma
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.chains import RetrievalQA
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -74,4 +74,5 @@ if st.button("Sor"):
                     st.markdown(f"- {doc.page_content}")
     else:
         st.warning("Lütfen bir soru gir.")
+
 
