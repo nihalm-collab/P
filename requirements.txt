@@ -6,4 +6,6 @@ sentence-transformers
 chromadb
 streamlit
 python-dotenv
+langchain-community
+
 
